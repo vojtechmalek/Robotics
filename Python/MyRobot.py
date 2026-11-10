@@ -28,21 +28,21 @@ def sind(x_deg):  # sin with degrees
 
 class MyRobot:
     # ----------------------------- Constants (AX-12A) -------------------------
-    ADDR_MX_TORQUE_ENABLE = 24       # 1 byte
-    ADDR_MX_GOAL_POSITION = 30       # 2 bytes
-    ADDR_MX_MOVING_SPEED = 32        # 2 bytes
-    ADDR_MX_TORQUE_LIMIT = 34        # 2 bytes
-    ADDR_MX_PRESENT_POSITION = 36    # 2 bytes
+    ADDR_MX_TORQUE_ENABLE = 24  # 1 byte
+    ADDR_MX_GOAL_POSITION = 30  # 2 bytes
+    ADDR_MX_MOVING_SPEED = 32  # 2 bytes
+    ADDR_MX_TORQUE_LIMIT = 34  # 2 bytes
+    ADDR_MX_PRESENT_POSITION = 36  # 2 bytes
 
     PROTOCOL_VERSION = 1.0
     BAUDRATE = 1000000
-    DEVICENAME = "COM7"              # e.g., Windows: 'COM3' | Linux: '/dev/ttyUSB0' | Mac: '/dev/tty.usbserial-*'
+    DEVICENAME = "COM7"  # e.g., Windows: 'COM3' | Linux: '/dev/ttyUSB0' | Mac: '/dev/tty.usbserial-*'
 
     TORQUE_ENABLE = 1
     TORQUE_DISABLE = 0
     COMM_SUCCESS = 0
     DXL_MOVING_STATUS_THRESHOLD = 10  # [ticks], not used directly here
-    TICKS_PER_DEG = 1.0 / 0.29        # ≈ 3.448275862 ticks per degree
+    TICKS_PER_DEG = 1.0 / 0.29  # ≈ 3.448275862 ticks per degree
     DEG_PER_TICK = 0.29
 
     # ------------------------------- Init -------------------------------------
@@ -70,10 +70,21 @@ class MyRobot:
         self.init_status = 0
 
         self.movement_history = []  # list of dicts
-        self.motor_speed = np.array([0.1, 0.1, 0.1, 0.1])   # [0..1]
+        self.motor_speed = np.array([0.1, 0.1, 0.1, 0.1])  # [0..1]
         self.motor_torque = np.array([1.0, 1.0, 1.0, 1.0])  # [0..1]
         self.pitch = 0.0
 
+        PITCH = 18.5  # mm (measure it, 19.05 is more common)
+        rows = {
+            -1: (["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], -0.50),
+            0: (["Q", "W", "E", "R", "T", "Z", "U", "I", "O", "P"], 0.00),
+            1: (["A", "S", "D", "F", "G", "H", "J", "K", "L"], 0.25),
+            2: (["Y", "X", "C", "V", "B", "N", "M", "Comma", "DOT"], 0.75),
+        }
+        self.key_xyz = {}
+        for row_idx, (labels, x_off) in rows.items():
+            for i, lbl in enumerate(labels):
+                self.key_xyz[lbl] = np.array([(x_off + i) * PITCH, row_idx * PITCH, 0.0])
 
         # --- SDK setup ---
         try:
@@ -287,7 +298,6 @@ class MyRobot:
         self.disable_motors()
         raise TimeoutError(f'Motion timed out for {q}; last read error: {last_error}')
 
-
     # ------------------------------- Forward Kinematics -----------------------------------
     def forward_kinematics(self, q_deg, check_limits=True):
         """Return (T04, T05). Degrees in, mm translations out."""
@@ -300,7 +310,8 @@ class MyRobot:
         cb, sb = (np.cos(beta), np.sin(beta))
         r = -93 * np.sin(q2) - 93 * np.sin(q2 + q3) - 50 * sb
         h = 50 + 93 * np.cos(q2) + 93 * np.cos(q2 + q3) + 50 * cb
-        T04 = np.array([[-c1 * sb, -c1 * cb, s1, c1 * r], [-s1 * sb, -s1 * cb, -c1, s1 * r], [cb, -sb, 0, h], [0, 0, 0, 1]])
+        T04 = np.array(
+            [[-c1 * sb, -c1 * cb, s1, c1 * r], [-s1 * sb, -s1 * cb, -c1, s1 * r], [cb, -sb, 0, h], [0, 0, 0, 1]])
         T45 = np.eye(4)
         T45[:3, 3] = [-15, 45, 0]
         return (T04, T04 @ T45)
@@ -377,52 +388,52 @@ class MyRobot:
 
     # ------------------------------- Circle -----------------------------------
     def circle_configurations(self, center=(150, 0, 120), radius=32, segments=36, initial_q=None, max_step_deg=20):
-            """Return (phi radians, positions mm, Q degrees); validate before any move.
+        """Return (phi radians, positions mm, Q degrees); validate before any move.
 
-            Circle is parallel to yz, stylus horizontal. Reject discontinuous sequences.
-            """
-            center = np.asarray(center, dtype=float)
-            if center.shape != (3,) or not np.all(np.isfinite(center)):
-                raise ValueError('center must contain three finite coordinates.')
-            if not np.isfinite(radius) or radius <= 0:
-                raise ValueError('radius must be positive and finite.')
-            if not isinstance(segments, (int, np.integer)) or segments < 3:
-                raise ValueError('segments must be an integer >= 3.')
-            if not np.isfinite(max_step_deg) or max_step_deg <= 0:
-                raise ValueError('max_step_deg must be positive and finite.')
-            ref = None if initial_q is None else self._checked_angles(initial_q)
-            phi = np.linspace(0, 2 * np.pi, segments + 1)
-            positions = center + np.column_stack((np.zeros_like(phi), radius * np.cos(phi), radius * np.sin(phi)))
-            positions[-1] = positions[0]
-            candidates = [self.inverse_kinematics(p, k=0) for p in positions]
-            paths = []
-            for start in candidates[0]:
-                path = [start]
-                for choices in candidates[1:-1]:
-                    chosen = choices[np.argmin(np.linalg.norm(choices - path[-1], axis=1))]
-                    if np.max(np.abs(chosen - path[-1])) > max_step_deg:
-                        break
-                    path.append(chosen)
-                if len(path) != segments:
-                    continue
-                if np.max(np.abs(start - path[-1])) > max_step_deg:
-                    continue
-                path.append(start.copy())
-                Q = np.array(path)
-                cost = np.sum(np.linalg.norm(np.diff(Q, axis=0), axis=1))
-                if ref is not None:
-                    cost += np.linalg.norm(start - ref)
-                paths.append((cost, Q))
-            if not paths:
-                raise ValueError('No continuous limit-valid circle found; try a smaller radius.')
-            Q = min(paths, key=lambda item: item[0])[1]
-            for p, q in zip(positions, Q):
-                T04, _ = self.forward_kinematics(q)
-                if not np.allclose(T04[:3, 3], p, atol=1e-06, rtol=0):
-                    raise RuntimeError('Circle position validation failed.')
-                if abs(T04[2, 0]) > 1e-08:
-                    raise RuntimeError('Circle orientation validation failed.')
-            return (phi, positions, Q)
+        Circle is parallel to yz, stylus horizontal. Reject discontinuous sequences.
+        """
+        center = np.asarray(center, dtype=float)
+        if center.shape != (3,) or not np.all(np.isfinite(center)):
+            raise ValueError('center must contain three finite coordinates.')
+        if not np.isfinite(radius) or radius <= 0:
+            raise ValueError('radius must be positive and finite.')
+        if not isinstance(segments, (int, np.integer)) or segments < 3:
+            raise ValueError('segments must be an integer >= 3.')
+        if not np.isfinite(max_step_deg) or max_step_deg <= 0:
+            raise ValueError('max_step_deg must be positive and finite.')
+        ref = None if initial_q is None else self._checked_angles(initial_q)
+        phi = np.linspace(0, 2 * np.pi, segments + 1)
+        positions = center + np.column_stack((np.zeros_like(phi), radius * np.cos(phi), radius * np.sin(phi)))
+        positions[-1] = positions[0]
+        candidates = [self.inverse_kinematics(p, k=0) for p in positions]
+        paths = []
+        for start in candidates[0]:
+            path = [start]
+            for choices in candidates[1:-1]:
+                chosen = choices[np.argmin(np.linalg.norm(choices - path[-1], axis=1))]
+                if np.max(np.abs(chosen - path[-1])) > max_step_deg:
+                    break
+                path.append(chosen)
+            if len(path) != segments:
+                continue
+            if np.max(np.abs(start - path[-1])) > max_step_deg:
+                continue
+            path.append(start.copy())
+            Q = np.array(path)
+            cost = np.sum(np.linalg.norm(np.diff(Q, axis=0), axis=1))
+            if ref is not None:
+                cost += np.linalg.norm(start - ref)
+            paths.append((cost, Q))
+        if not paths:
+            raise ValueError('No continuous limit-valid circle found; try a smaller radius.')
+        Q = min(paths, key=lambda item: item[0])[1]
+        for p, q in zip(positions, Q):
+            T04, _ = self.forward_kinematics(q)
+            if not np.allclose(T04[:3, 3], p, atol=1e-06, rtol=0):
+                raise RuntimeError('Circle position validation failed.')
+            if abs(T04[2, 0]) > 1e-08:
+                raise RuntimeError('Circle orientation validation failed.')
+        return (phi, positions, Q)
 
     #  ------------------------------ Tests -----------------------------------
     def test_random_fk_ik(self, rng=None, pause_s=1.0):
@@ -449,7 +460,8 @@ class MyRobot:
         second_measured = self._move_checked(q_ik)
         time.sleep(pause_s)
         print('Measured first/second (deg):', first_measured, second_measured)
-        return dict(q_random=q_random, position=position, k=k, q_ik=q_ik, first_measured=first_measured, second_measured=second_measured)
+        return dict(q_random=q_random, position=position, k=k, q_ik=q_ik, first_measured=first_measured,
+                    second_measured=second_measured)
 
     def test_random_circle(self, rng=None, segments=72, pause_s=0.5):
         """Sample and prevalidate a random circle, then visit every point once."""
@@ -471,7 +483,7 @@ class MyRobot:
             self._move_checked(q)
             time.sleep(pause_s)
         return dict(center=center, radius=radius, phi=phi, positions=positions, Q=Q)
-    
+
     # ------------------------------- Motion -----------------------------------
     def move_j(self, j1_deg, j2_deg, j3_deg, j4_deg, wait=True, tol_deg=2.0, poll_period=0.05):
         # Limits
@@ -484,8 +496,8 @@ class MyRobot:
             self.smooth_speed(desired - self.joint_angles)
 
         # Update internal & FK
-        #self.joint_angles = desired.copy()
-        #self.forward(desired)
+        # self.joint_angles = desired.copy()
+        # self.forward(desired)
 
         # Apply motor offsets for command
         cmd_deg = desired + self.joint_offsets
@@ -494,7 +506,6 @@ class MyRobot:
 
         if not wait:
             return
-
 
         # Wait until all joints within tolerance
         while True:
@@ -508,13 +519,13 @@ class MyRobot:
                 break
             time.sleep(poll_period)
 
-    #def move_c(self, x, y, z, pitch_deg, **kwargs):
-     #   j_deg = self.inverse(x, y, z, math.radians(pitch_deg))
-      #  self.move_j(j_deg[0], j_deg[1], j_deg[2], j_deg[3], **kwargs)
+    # def move_c(self, x, y, z, pitch_deg, **kwargs):
+    #   j_deg = self.inverse(x, y, z, math.radians(pitch_deg))
+    #  self.move_j(j_deg[0], j_deg[1], j_deg[2], j_deg[3], **kwargs)
 
-    #def read_ee_position(self):
-     #   j_a = self.read_joint_angles()
-      #  return self.forward(j_a)
+    # def read_ee_position(self):
+    #   j_a = self.read_joint_angles()
+    #  return self.forward(j_a)
 
     # --------------------------- History / Macros ------------------------------
     def record_configuration(self):
@@ -554,17 +565,57 @@ class MyRobot:
             if self.gripper_open_flag != rec["gripper_open"]:
                 self.actuate_gripper()
                 time.sleep(dwell_after_grip_s)
-    
+
     # ------------------------------- Camera -----------------------------------
     def capture_image(self):
         camera = cv2.VideoCapture(1, cv2.CAP_DSHOW)
-        if not camera.isOpened():   
+        if not camera.isOpened():
             raise RuntimeError("Could not open camera.")
         ret, frame = camera.read()
         if not ret:
             raise RuntimeError("Could not read frame from camera.")
         camera.release()
         return frame
+
+    def estimate_keyboard_pose(self, detected_centers, K, dist):
+        """
+        detected_centers: dict {label: (u, v)} pixel centers, e.g. {"Q": (310.2, 200.5), ...}
+        Returns T_cam_kb (4x4), reprojection error [px], number of inliers.
+        """
+        labels = [l.upper() for l in detected_centers if l.upper() in self.key_xyz]
+        if len(labels) < 4:
+            raise ValueError(f"Need >= 4 known keys, got {len(labels)}")
+
+        obj = np.array([self.key_xyz[l] for l in labels], dtype=np.float64)
+        img = np.array([detected_centers[l] if l in detected_centers else detected_centers[l.lower()]
+                        for l in labels], dtype=np.float64)
+
+        # Robust initial estimate (rejects wrongly labeled keys)
+        ok, rvec, tvec, inliers = cv2.solvePnPRansac(
+            obj, img, K, dist,
+            flags=cv2.SOLVEPNP_IPPE,
+            reprojectionError=4.0,
+            iterationsCount=200,
+        )
+        if not ok or inliers is None or len(inliers) < 4:
+            raise RuntimeError("PnP failed")
+
+        idx = inliers.ravel()
+        # Refine on inliers only
+        rvec, tvec = cv2.solvePnPRefineLM(obj[idx], img[idx], K, dist, rvec, tvec)
+
+        # Reprojection error
+        proj, _ = cv2.projectPoints(obj[idx], rvec, tvec, K, dist)
+        err = np.linalg.norm(proj.reshape(-1, 2) - img[idx], axis=1).mean()
+
+        R, _ = cv2.Rodrigues(rvec)
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[:3, 3] = tvec.ravel()
+        if T[2, 3] < 0:
+            print("Warning: keyboard is behind the camera, check labels/layout")
+        return T, err, len(idx)
+
 
 # ------------------------------- Example usage --------------------------------
 # Example 1:
@@ -596,10 +647,10 @@ if __name__ == "__main__":
 
 
 '''
-#Example 2:
-#Demonstrates how to move the robot joints into desired a list of joint positions [degrees]
-#You might need to adjust the offsets in the code above to make the zero point suit your needs.
-#Just comment out the code snippet, input desired joint angle sequence in robot.move_j() and run.
+# Example 2:
+# Demonstrates how to move the robot joints into desired a list of joint positions [degrees]
+# You might need to adjust the offsets in the code above to make the zero point suit your needs.
+# Just comment out the code snippet, input desired joint angle sequence in robot.move_j() and run.
 
 '''
 if __name__ == "__main__":
@@ -687,7 +738,6 @@ if __name__ == "__main__":
             print("\nMotors disabled. Program finished.")
 '''
 
-
 if __name__ == "__main__":
     import time
     import numpy as np
@@ -695,27 +745,73 @@ if __name__ == "__main__":
     # Create robot instance
     robot = MyRobot()
 
-
-
     if robot.init_status:
         try:
             robot.set_speed([0.05] * 4, overwrite_speeds=True)
 
-            #result1 = robot.test_random_fk_ik()
-            #result2 = robot.test_random_circle()
+            # result1 = robot.test_random_fk_ik()
+            # result2 = robot.test_random_circle()
             # robot.move_j(0, -10, -70, -70) #Degrees
-            robot.move_j(0, -30, -30, -10) #Degrees
+
+            Q_pos = robot.forward_kinematics([50.1, -77.21, -44.73, 21.97])
+            Q_pos = Q_pos[0]
+            print(Q_pos[:3, 3])
+            given_config = robot.inverse_kinematics(Q_pos[:3, 3], -1)
+            print(given_config)
+            exit()
+            # [       50.1      -77.21      -44.73       21.97]
+            q_camera_view = [20, 40, -90, -15]
+
+            robot.move_j(*q_camera_view)  # Degrees
             time.sleep(0.5)
             print("Hello world")
             captured_image = robot.capture_image()
             keys, results = robot.recognize_keys(captured_image)
 
             cv2.imwrite("output.jpg", results[0].plot())
-            print(keys)
+
+            detected_centers = {d["label"]: d["center"] for d in keys}
+            print(detected_centers)
 
             time.sleep(2)
 
+            K = np.array([
+                [719.96843828, 0.0, 320.87010691],
+                [0.0, 719.03419928, 235.32074999],
+                [0.0, 0.0, 1.0],
+            ])
 
-            robot._move_checked([0, 0, 0, 0])
+            # OpenCV order: [k1, k2, p1, p2, k3]
+            dist = np.array([
+                1.89928689e-01,
+                -2.36980599e+00,
+                -9.19692077e-03,
+                -3.62125948e-03,
+                1.98586998e+01,
+            ])
+
+            T_cam_keyboard, err, num_whateber = robot.estimate_keyboard_pose(detected_centers, K, dist)
+            print(T_cam_keyboard)
+
+            _, T05 = robot.forward_kinematics(q_camera_view)
+
+            # align the frame 5 to open cv camera frame
+            R_5_cam = np.array([
+                [0, -1, 0],  # columns: x_cam = (0,0,1), y_cam = (-1,0,0), z_cam = (0,-1,0)
+                [0, 0, -1],
+                [1, 0, 0],
+            ], dtype=float)
+
+            T_5_cam = np.eye(4)
+            T_5_cam[:3, :3] = R_5_cam
+
+            T_base_Q = T05 @ T_5_cam @ T_cam_keyboard
+
+            print(T_base_Q[:3, 3])
+            configuration_to_q = robot.inverse_kinematics(T_base_Q[:3, 3], -0.8)
+            print(configuration_to_q)
+
+            robot.move_j(*(configuration_to_q[0]))
+            # robot._move_checked([0, 0, 0, 0])
         finally:
             robot.disable_motors()
