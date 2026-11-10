@@ -36,7 +36,7 @@ class MyRobot:
 
     PROTOCOL_VERSION = 1.0
     BAUDRATE = 1000000
-    DEVICENAME = "COM7"  # e.g., Windows: 'COM3' | Linux: '/dev/ttyUSB0' | Mac: '/dev/tty.usbserial-*'
+    DEVICENAME = "COM9"  # e.g., Windows: 'COM3' | Linux: '/dev/ttyUSB0' | Mac: '/dev/tty.usbserial-*'
 
     TORQUE_ENABLE = 1
     TORQUE_DISABLE = 0
@@ -753,14 +753,16 @@ if __name__ == "__main__":
             # result2 = robot.test_random_circle()
             # robot.move_j(0, -10, -70, -70) #Degrees
 
-            Q_pos = robot.forward_kinematics([50.1, -77.21, -44.73, 21.97])
-            Q_pos = Q_pos[0]
-            print(Q_pos[:3, 3])
-            given_config = robot.inverse_kinematics(Q_pos[:3, 3], -1)
-            print(given_config)
-            exit()
-            # [       50.1      -77.21      -44.73       21.97]
-            q_camera_view = [20, 40, -90, -15]
+            # current_q = robot.read_joint_angles()
+            # print(current_q)
+            # print("Forward kinematics")
+            # print(robot.forward_kinematics(current_q))
+            #
+            # config = robot.inverse_kinematics([140.56, 31.651, -22.311], -1)
+            # robot.move_j(*(config[1]))
+            # exit()
+
+            q_camera_view = [0, 40, -90, -105]
 
             robot.move_j(*q_camera_view)  # Degrees
             time.sleep(0.5)
@@ -811,7 +813,7 @@ if __name__ == "__main__":
             configuration_to_q = robot.inverse_kinematics(T_base_Q[:3, 3], -0.8)
             print(configuration_to_q)
 
-            robot.move_j(*(configuration_to_q[0]))
+            robot.move_j(*(configuration_to_q[1]))
             # robot._move_checked([0, 0, 0, 0])
         finally:
             robot.disable_motors()
