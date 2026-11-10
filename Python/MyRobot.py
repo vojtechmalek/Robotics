@@ -6,6 +6,7 @@ import numpy as np
 import time
 import itertools
 import cv2
+from ultralytics import YOLO
 
 # --- Dynamixel SDK path bootstrap -----------------------
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
@@ -35,7 +36,7 @@ class MyRobot:
 
     PROTOCOL_VERSION = 1.0
     BAUDRATE = 1000000
-    DEVICENAME = "COM8"              # e.g., Windows: 'COM3' | Linux: '/dev/ttyUSB0' | Mac: '/dev/tty.usbserial-*'
+    DEVICENAME = "COM7"              # e.g., Windows: 'COM3' | Linux: '/dev/ttyUSB0' | Mac: '/dev/tty.usbserial-*'
 
     TORQUE_ENABLE = 1
     TORQUE_DISABLE = 0
@@ -101,6 +102,31 @@ class MyRobot:
         except Exception as e:
             print(f"Initialization error: {e}")
             self.init_status = 0
+
+    def recognize_keys(self, keyboard_image):
+        model_path = r"../runs/detect/train-3/weights/best.pt"
+        model = YOLO(model_path)
+
+        # Run prediction
+        results = model.predict(
+            source=keyboard_image,
+            conf=0.25,
+            device=0
+        )
+
+        keys = []
+        r = results[0]  # one image -> one result
+        names = r.names  # class id -> label
+        for box in r.boxes:
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            keys.append({
+                "label": names[int(box.cls[0])],
+                "conf": float(box.conf[0]),
+                "bbox": (x1, y1, x2, y2),
+                "center": ((x1 + x2) / 2, (y1 + y2) / 2),
+            })
+
+        return keys, results
 
     # ----------------------------- Utilities ----------------------------------
     @staticmethod
@@ -531,7 +557,7 @@ class MyRobot:
     
     # ------------------------------- Camera -----------------------------------
     def capture_image(self):
-        camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        camera = cv2.VideoCapture(1, cv2.CAP_DSHOW)
         if not camera.isOpened():   
             raise RuntimeError("Could not open camera.")
         ret, frame = camera.read()
@@ -677,9 +703,16 @@ if __name__ == "__main__":
 
             #result1 = robot.test_random_fk_ik()
             #result2 = robot.test_random_circle()
-            robot.move_j(40, -10, -70, -70) #Degrees
+            # robot.move_j(0, -10, -70, -70) #Degrees
+            robot.move_j(0, -30, -30, -10) #Degrees
             time.sleep(0.5)
+            print("Hello world")
             captured_image = robot.capture_image()
+            keys, results = robot.recognize_keys(captured_image)
+
+            cv2.imwrite("output.jpg", results[0].plot())
+            print(keys)
+
             time.sleep(2)
 
 

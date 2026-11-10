@@ -6,7 +6,7 @@ def main():
     model_path = r"../runs/detect/train-3/weights/best.pt"
     model = YOLO(model_path)
 
-    source_path = r"real_keyboard_images/keyboard_1.jpg"  # Replace with your test image path
+    source_path = r"real_keyboard_images/keyboard_2.jpg"  # Replace with your test image path
 
     # Run prediction
     results = model.predict(
